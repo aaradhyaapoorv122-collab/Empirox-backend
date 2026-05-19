@@ -5,6 +5,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const axios = require("axios");
+const fetch = require("node-fetch");
 
 const supabase = require("./supabaseClient");
 
@@ -18,8 +19,14 @@ const razorpay = new Razorpay({
 });
 
 /* ===================== MIDDLEWARE ===================== */
-app.use(cors());
-
+app.use(cors({
+origin: [
+  "http://localhost:5173",
+  "https://empiroxmindcraft.in",
+  "https://www.empiroxmindcraft.in",
+  /\.vercel\.app$/
+]
+}))
 app.use(express.json());
 
 console.log("🔥 SERVER STARTING...");
@@ -1137,9 +1144,10 @@ app.post("/ai/core", async (req, res) => {
     const data = await response.json();
 
     return res.json({
-      reply:
-        data?.output?.[0]?.content?.[0]?.text ||
-        "No response generated",
+   reply =
+  data.output_text ||
+  data?.output?.[0]?.content?.[0]?.text ||
+  "No response generated",
       mode: "general_ai"
     });
 
@@ -1150,4 +1158,4 @@ app.post("/ai/core", async (req, res) => {
 });
 app.listen(PORT, () => {
   console.log("🚀 Empirox AI FINAL v3 running");
-});
+}); 
