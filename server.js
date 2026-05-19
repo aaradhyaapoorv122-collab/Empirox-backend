@@ -1143,13 +1143,13 @@ app.post("/ai/core", async (req, res) => {
 
     const data = await response.json();
 
-    return res.json({
-   reply =
-  data.output_text ||
-  data?.output?.[0]?.content?.[0]?.text ||
-  "No response generated",
-      mode: "general_ai"
-    });
+  return res.json({
+  reply:
+    data.output_text ||
+    data?.output?.[0]?.content?.[0]?.text ||
+    "No response generated",
+  mode: "general_ai"
+});
 
   } catch (err) {
     console.error("AI CORE ERROR:", err);
