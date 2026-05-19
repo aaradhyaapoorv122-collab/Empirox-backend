@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
 const Razorpay = require("razorpay");
+const axios = require("axios");
 
 const supabase = require("./supabaseClient");
 
@@ -17,7 +18,7 @@ const razorpay = new Razorpay({
 });
 
 /* ===================== MIDDLEWARE ===================== */
-app.use(cors({ origin: "*" }));
+app.use(cors({ origin: "empiroxmindcraft.in" }));
 app.use(express.json());
 
 console.log("🔥 SERVER STARTING...");
@@ -27,6 +28,31 @@ console.log("🔑 OPENAI KEY LOADED:", !!process.env.OPENAI_API_KEY);
 app.get("/", (req, res) => {
   res.send("🚀 Empirox Backend is LIVE");
 });
+
+/* ===================== WIKIPEDIA FACT ENGINE ===================== */
+
+const { openAISearch } = require("./services/searchEngine");
+const { getNews } = require("./services/newsEngine");
+
+function isRealTimeQuery(text) {
+  const t = text.toLowerCase();
+
+  return (
+    t.includes("latest") ||
+    t.includes("news") ||
+    t.includes("today") ||
+    t.includes("current") ||
+    t.includes("now") ||
+    t.includes("who is") ||
+    t.includes("prime minister") ||
+    t.includes("president") ||
+    t.includes("update")
+  );
+}
+/* ===================== AI CORE ===================== */
+
+
+   
 
 /* ===================== RAZORPAY ORDER ===================== */
 app.post("/create-order", async (req, res) => {
@@ -62,16 +88,14 @@ app.post("/verify-payment", async (req, res) => {
       plan,
     } = req.body;
 
-    const crypto = require("crypto");
-
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
+    const body =
+      razorpay_order_id + "|" + razorpay_payment_id;
 
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(body)
       .digest("hex");
 
-    // ❌ INVALID PAYMENT
     if (expectedSignature !== razorpay_signature) {
       return res.status(400).json({
         success: false,
@@ -79,7 +103,6 @@ app.post("/verify-payment", async (req, res) => {
       });
     }
 
-    // 💰 SET PLAN DETAILS
     const amount = plan === "monthly" ? 149 : 1199;
 
     const expiresAt = new Date();
@@ -87,30 +110,19 @@ app.post("/verify-payment", async (req, res) => {
       expiresAt.getMonth() + (plan === "monthly" ? 1 : 12)
     );
 
-    // 🧠 1. INSERT SUBSCRIPTION
-    const { error: subError } = await supabase
-      .from("subscriptions")
-      .insert([
-        {
-          user_id,
-          plan,
-          status: "active",
-          razorpay_order_id,
-          razorpay_payment_id,
-          razorpay_signature,
-          amount,
-          expires_at: expiresAt,
-        },
-      ]);
+    await supabase.from("subscriptions").insert([
+      {
+        user_id,
+        plan,
+        status: "active",
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature,
+        amount,
+        expires_at: expiresAt,
+      },
+    ]);
 
-    if (subError) {
-      return res.status(500).json({
-        success: false,
-        message: "Subscription insert failed",
-      });
-    }
-
-    // 🧠 2. UPDATE PROFILE
     await supabase
       .from("profiles")
       .update({
@@ -120,15 +132,11 @@ app.post("/verify-payment", async (req, res) => {
       })
       .eq("id", user_id);
 
-    // 🧠 3. LOG EVENT
     await supabase.from("payment_logs").insert([
       {
         user_id,
         event: "payment_success",
-        metadata: {
-          plan,
-          amount,
-        },
+        metadata: { plan, amount },
       },
     ]);
 
@@ -138,7 +146,6 @@ app.post("/verify-payment", async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-
     return res.status(500).json({
       success: false,
       message: "Server error",
@@ -146,126 +153,46 @@ app.post("/verify-payment", async (req, res) => {
   }
 });
 
+/* ===================== START SERVER ===================== */
+
 /* ===================== FEATURE PROMPTS (ADDED) ===================== */
 const systemPrompt = "Empirox AI Core Assistant...";
-const SmartChatprompt=  `You are SmartChat AI inside the EMPIROX education system.
-
-You are a highly reliable, real-time academic assistant designed for students.
-
-You must never give two conflicting answers in the same response.
-Always choose ONE final answer.
+const SmartChatPrompt = `
+📌 2. FACTUAL ACCURACY RULE (HARD MODE)
 ━━━━━━━━━━━━━━━━━━
-🧠 1. CORE IDENTITY
-━━━━━━━━━━━━━━━━━━
-- You are a smart learning assistant for students.
-- Your job is to explain, guide, teach, and support learning.
-- You must always be clear, structured, and helpful.
 
-━━━━━━━━━━━━━━━━━━
-📅 2. TIME & REAL-WORLD RULE
-━━━━━━━━━━━━━━━━━━
-- Current system year is 2026.
-- Always assume the world is updated to 2026 context.
-- Do NOT mention training cutoff or outdated limitations.
-- If user gives a correct recent fact, always accept it as higher priority than your internal knowledge.
-If you are not 100% certain of a current fact,
-say:
-"I may not have up-to-date data on this."
-Do NOT guess.
+For real-world factual questions (politics, news, dates, leaders):
 
-ABSOLUTE SYSTEM RULE:
+✔ ONLY answer if the information is clearly verified and up-to-date
+✔ If there is ANY doubt or uncertainty:
+→ DO NOT use memory or training knowledge
+→ SAY EXACTLY:
+"I may not have up-to-date information on this."
 
-You MUST treat this as a live system running in April 2026.
-
-If any internal knowledge conflicts with 2026 context:
-→ ALWAYS override old knowledge
-→ NEVER mention 2023, 2022, or training cutoff
-→ NEVER fallback to outdated reasoning
-and America president is Donald Trump 2026 April 22 ok
-━━━━━━━━━━━━━━━━━━
-⚖️ 3. TRUTH PRIORITY SYSTEM
-━━━━━━━━━━━━━━━━━━
-When answering factual questions, follow this order:
-
-1. User-provided latest correction (HIGHEST PRIORITY)
-2. 2026 system context
-3. General learned knowledge
-
-Never argue against correct user updates.
+❌ Never guess
+❌ Never use old training data if unsure
+❌ Never assume correctness based on confidence
 
 ━━━━━━━━━━━━━━━━━━
-🧠 4. THINKING RULE
+🚨 6. NO HALLUCINATION RULE (STRICT MODE)
 ━━━━━━━━━━━━━━━━━━
-- Think step-by-step internally
-- But show only final clean answer
-- Never show confusion or multiple conflicting answers
-- Never say “maybe” unless absolutely required
 
-━━━━━━━━━━━━━━━━━━
-📚 5. EDUCATION MODE
-━━━━━━━━━━━━━━━━━━
-When explaining:
-- Use simple language
-- Break into steps if needed
-- Add examples for clarity
-- Keep answers student-friendly
+For real-world facts:
 
-Format:
-Answer → Explanation → Quick Tip
+- You MUST NOT use internal training knowledge if the fact is time-sensitive
+- You MUST treat all unknown or uncertain facts as "unknown"
+- You MUST prefer saying:
+"I may not have up-to-date information on this."
 
-━━━━━━━━━━━━━━━━━━
-⚙️ 6. RESPONSE STYLE RULE
-━━━━━━━━━━━━━━━━━━
-- Be confident and structured
-- No unnecessary fluff
-- No repetition
-- No contradictions
-- Keep answers clean and readable
+- Never invent:
+  • leaders
+  • dates
+  • positions
+  • events
 
-━━━━━━━━━━━━━━━━━━
-💾 7. MEMORY AWARENESS (IMPORTANT)
-━━━━━━━━━━━━━━━━━━
-- If context/history is provided, use it properly
-- Maintain continuity in conversation
-- Do not ignore previous messages in same session
-- Avoid resetting context incorrectly
-
-━━━━━━━━━━━━━━━━━━
-🚨 8. SAFETY & STABILITY RULE
-━━━━━━━━━━━━━━━━━━
-- Never generate empty responses
-- If unsure, give best possible explanation
-- If question is unclear, ask ONE short clarification question
-- Never break character or become inconsistent
-
-━━━━━━━━━━━━━━━━━━
-🧾 9. FACTUAL QUESTIONS RULE
-━━━━━━━━━━━━━━━━━━
-For questions like:
-- current president
-- current events
-- latest news
-
-You must:
-- Give ONE final answer
-- Do not show multiple conflicting possibilities
-- If user correction exists, prefer it
-
-━━━━━━━━━━━━━━━━━━
-🧠 10. FINAL OUTPUT RULE
-━━━━━━━━━━━━━━━━━━
-Always respond in this structure:
-
-Answer:
-<final direct response>
-
-(Optional)
-Explanation:
-<short reasoning if needed>
-
-Tip:
-<small helpful insight if useful>`
-
+⚠️ IMPORTANT:
+If real-time confirmation is not provided, STOP and refuse to guess.
+`;
 const solverPrompt = `
 You are Empirox AI Doubt Solver.
 
@@ -563,16 +490,234 @@ RULES:
 `;
 
 const quizPrompt = `
-You are Quiz Arena AI.
+text
+You are EMPIROX QUIZ ARENA AI — a premium educational quiz assistant inside the Empirox learning app.
 
-Generate exam-style questions.
+MISSION:
+Always help the user by generating quizzes, explaining answers, and guiding learning in a smart, friendly, confident way. Never leave the user with a dead-end response.
 
-Modes:
-- Practice
-- Mock (20 marks)
-- Full Test (40 marks)
+PRIMARY GOAL:
+Convert any valid user academic request into useful quiz practice or learning support.
 
-Follow school exam pattern.
+==================================================
+CORE BEHAVIOR RULES
+==================================================
+
+1. NEVER reply with:
+- I don't know
+- Out of syllabus
+- AI not working
+- AI unavailable
+- Cannot answer
+- No data found
+
+2. ALWAYS provide a helpful answer.
+
+3. If the request is unclear, politely ask for missing details.
+
+4. If the user says casual things like:
+- hi
+- hello
+- hey
+- good morning
+
+Then reply warmly and guide them toward quiz setup.
+
+Example:
+"Hello 👋 Ready to practice? Please enter your Board, Class, Subject, and Topic to begin your smart quiz."
+
+5. Stay focused on education, quizzes, learning, revision, motivation, and student help.
+
+6. Keep responses clean, professional, positive, motivating.
+
+==================================================
+MANDATORY QUIZ SETUP FLOW
+==================================================
+
+Before generating a quiz, user should provide:
+
+1. Board (CBSE / ICSE / State Board / Other)
+2. Class / Standard
+3. Subject
+4. Topic / Chapter
+
+If any of these are missing, ask clearly:
+
+"To generate your best quiz, please enter:
+Board:
+Class:
+Subject:
+Topic:"
+
+Do not proceed to final quiz until enough details exist.
+
+==================================================
+UNIVERSAL COVERAGE RULE
+==================================================
+
+Support users from beginner to advanced school level.
+
+Target coverage:
+- Class 1 to Class 12+
+- Major school boards
+- Math
+- Science
+- Physics
+- Chemistry
+- Biology
+- English
+- Hindi
+- SST
+- Computer
+- Commerce basics
+- General aptitude
+- Revision practice
+
+If the topic is broad or unusual:
+Convert it into the closest useful educational topic and still help.
+
+Example:
+Input: "Light chapter"
+Output: quiz on reflection/refraction based on class level.
+
+==================================================
+QUIZ GENERATION RULES
+==================================================
+
+When user requests a quiz:
+
+Generate 5 or 10 MCQs depending on app request.
+
+Use this exact JSON format:
+
+
+  
+  "question": "Question text",
+    "options": 
+      "Option A",
+      "Option B",
+      "Option C",
+      "Option D"
+    
+    "answer": "Option A",
+    "explanation": "Short explanation"
+  
+
+
+RULES:
+- Valid JSON only when backend expects JSON
+- No markdown fences
+- No extra commentary
+- Questions should match board/class/topic
+- Exam-oriented
+- Clear language
+- Accurate answers
+- Balanced difficulty
+- Avoid duplicate questions
+
+==================================================
+IF USER ASKS GENERAL QUESTION
+==================================================
+
+Examples:
+"What is photosynthesis?"
+"Explain algebra"
+"How to study faster?"
+
+Then answer clearly first.
+Then offer quiz practice.
+
+Example:
+"Photosynthesis is the process by which plants make food using sunlight. Would you like a 5-question quiz on this topic?"
+
+==================================================
+IF USER SAYS HI / HELLO
+==================================================
+
+Reply:
+
+"Hello 👋 Welcome to Quiz Arena AI.
+Please enter:
+Board
+Class
+Subject
+Topic
+and I’ll generate your smart quiz instantly."
+
+==================================================
+IF USER MESSAGE IS INCOMPLETE
+==================================================
+
+Examples:
+"Math"
+"Science quiz"
+"Chapter test"
+
+Reply:
+
+"Great choice 👍 Please complete these details:
+Board:
+Class:
+Subject:
+Topic:"
+
+==================================================
+IF USER ASKS NON-ACADEMIC THINGS
+==================================================
+
+Be polite, brief, then redirect to learning.
+
+Example:
+"Hi! I’m here mainly to help with quizzes and study practice. Tell me your Board, Class, Subject, and Topic to begin."
+
+==================================================
+TONE
+==================================================
+
+- Smart
+- Friendly
+- Fast
+- Motivating
+- Student-friendly
+- Premium quality
+
+==================================================
+FINAL PRIORITY ORDER
+==================================================
+
+1. Always respond
+2. Never dead-end user
+3. Ask for Board/Class/Subject/Topic if missing
+4. Generate accurate quiz if details given
+5. If not quiz request, still help educationally
+6. Encourage learning
+
+==================================================
+EXAMPLE INPUT / OUTPUT
+==================================================
+
+User: hi
+
+Output:
+Hello 👋 Welcome to Quiz Arena AI.
+Please enter:
+Board:
+Class:
+Subject:
+Topic:
+
+User: CBSE Class 8 Science Cell
+
+Output:
+(JSON array of MCQs)
+
+User: Explain force
+
+Output:
+Force is a push or pull acting on an object.
+Would you like a Class-based quiz on Force?
+
+
 `;
 const testReviewPrompt = `
 You are Test Review AI of Empirox.
@@ -815,103 +960,193 @@ Make it engaging and gamified.
 /* ===================== AI CHAT ROUTE ===================== */
 app.post("/ai/core", async (req, res) => {
   try {
-    const { message, standard = "8", context = "", feature = "smart_chat" } = req.body;
-
-    let history = req.body.history;
-
-    if (!Array.isArray(history)) {
-      try {
-        history = JSON.parse(history);
-      } catch {
-        history = [];
-      }
-    }
+    const { message, history = [] } = req.body;
 
     if (!message) {
-      return res.status(400).json({ reply: "Message is required" });
+      return res.status(400).json({ reply: "Message required" });
     }
 
-    let finalPrompt = systemPrompt;
+    const text = message.toLowerCase();
 
-    switch (feature) {
-      case "smart_chat": finalPrompt = SmartChatprompt; break;
-      case "solver_ai": finalPrompt = solverPrompt; break;
-      case "mentor_ai": finalPrompt = mentorPrompt; break;
-      case "summary_ai": finalPrompt = summaryPrompt; break;
-      case "notes_ai": finalPrompt = notesPrompt; break;
-      case "StudyCompanion_ai": finalPrompt = companionPrompt; break;
-      case "planner_ai": finalPrompt = plannerPrompt; break;
-      case "quiz_ai": finalPrompt = quizPrompt; break;
-      case "test_review_ai": finalPrompt = testReviewPrompt; break;
-      case "performance_coach_ai": finalPrompt = performanceCoachPrompt; break;
-      case "skill_hub_ai": finalPrompt = skillHubPrompt; break;
-      case "career_director_ai": finalPrompt = careerDirectorPrompt; break;
-      case "challenge_generator_ai": finalPrompt = challengeGeneratorPrompt; break;
-      default: finalPrompt = systemPrompt;
+    /* ================= CLEAN HISTORY ================= */
+    const cleanHistory = history.slice(-10).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    /* ================= 1. STRICT DYNAMIC FACT DETECTOR ================= */
+    const isDynamicFact = (t) => {
+      const patterns = [
+  "prime minister",
+  "who is pm",
+  "who is president",
+  "current president",
+  "current prime minister",
+  "breaking news",
+  "latest news",
+  "today news",
+  "currency rate",
+  "stock market",
+  "live score",
+  "weather today",
+  "election result"
+];
+      return patterns.some((p) => t.includes(p));
+    };
+
+    /* ================= 2. EDUCATION DETECTOR ================= */
+    const isEducation = (t) => {
+      const patterns = [
+        "explain",
+        "meaning",
+        "what is",
+        "define",
+        "history",
+        "science",
+        "math",
+        "physics",
+        "chemistry",
+        "biology",
+        "grammar",
+        "who was",
+        "rabindranath",
+        "tagore",
+        "before 2023"
+      ];
+
+      return patterns.some((p) => t.includes(p));
+    };
+
+    /* ================= 3. VERIFIED LINKS ================= */
+    const getVerifiedLinks = (q) => {
+      const query = q.toLowerCase();
+
+      if (query.includes("pm") || query.includes("prime minister")) {
+        return [
+          {
+            title: "Wikipedia - Current Leaders",
+            url: "https://en.wikipedia.org/wiki/List_of_current_heads_of_state_and_government"
+          },
+          {
+            title: "Britannica Leaders",
+            url: "https://www.britannica.com/topic/list-of-heads-of-state-and-government-2023-2087707"
+          },
+          {
+            title: "BBC World Politics",
+            url: "https://www.bbc.com/news/world"
+          }
+        ];
+      }
+
+      if (query.includes("president")) {
+        return [
+          {
+            title: "White House Official",
+            url: "https://www.whitehouse.gov"
+          },
+          {
+            title: "Wikipedia Presidents List",
+            url: "https://en.wikipedia.org/wiki/List_of_presidents_of_the_United_States"
+          }
+        ];
+      }
+
+      return [
+        {
+          title: "Wikipedia",
+          url: "https://www.wikipedia.org"
+        },
+        {
+          title: "Britannica",
+          url: "https://www.britannica.com"
+        }
+      ];
+    };
+
+    /* ================= 🔴 CASE 1: DYNAMIC FACTS → LINKS ONLY (NO AI) ================= */
+    if (isDynamicFact(text)) {
+      return res.json({
+        reply:
+          "This is a real-time changing fact. Please refer to trusted sources below.",
+        links: getVerifiedLinks(message),
+        mode: "verified_links_only"
+      });
     }
 
-    const messages = [
+    /* ================= 🟢 CASE 2: EDUCATION → AI ================= */
+    if (isEducation(text)) {
+      const response = await fetch(
+        "https://api.openai.com/v1/responses",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            input: [
+              {
+                role: "system",
+                content:
+                  "You are a world-class teacher. Explain step-by-step in simple language.",
+              },
+              ...cleanHistory,
+              { role: "user", content: message },
+            ],
+            max_output_tokens: 800,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      return res.json({
+        reply:
+          data?.output?.[0]?.content?.[0]?.text ||
+          "No response generated",
+        mode: "education_ai"
+      });
+    }
+
+    /* ================= 🟡 CASE 3: GENERAL AI ================= */
+    const response = await fetch(
+      "https://api.openai.com/v1/responses",
       {
-        role: "system",
-        content: `
-${finalPrompt}
-
-━━━━━━━━━━━━━━━━━━━━
-SYSTEM OVERRIDE LAYER
-━━━━━━━━━━━━━━━━━━━━
-
-Current Date: April 2026
-You MUST treat this as real-time updated system.
-
-CRITICAL RULES:
-- Never rely only on training knowledge
-- Always prioritize system + user-provided corrections
-- If conflict exists → user + system overrides model memory
-- Never say outdated limitations
-
-${context ? `Context: ${context}` : ""}
-Student Class: ${standard}
-`,
-      },
-      ...history.filter((m) =>
-  typeof m.content === "string" && m.content.trim().length > 0
-),
-      {
-        role: "user",
-        content: message,
-      },
-    ];
-
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages,
-        temperature: 0.7,
-        max_tokens: 700,
-      }),
-    });
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          input: [
+            {
+              role: "system",
+            content: companionPrompt,
+            },
+            ...cleanHistory,
+            { role: "user", content: message },
+          ],
+          max_output_tokens: 800,
+        }),
+      }
+    );
 
     const data = await response.json();
 
-    const reply =
-      data?.choices?.[0]?.message?.content || "⚠️ No response from AI";
-
-    return res.json({ reply });
+    return res.json({
+      reply:
+        data?.output?.[0]?.content?.[0]?.text ||
+        "No response generated",
+      mode: "general_ai"
+    });
 
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({
-      reply: "⚠️ Server error",
-    });
+    console.error("AI CORE ERROR:", err);
+    res.status(500).json({ reply: "Server error" });
   }
 });
-
-/* ===================== START ===================== */
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
+  console.log("🚀 Empirox AI FINAL v3 running");
 });
