@@ -18,7 +18,7 @@ const razorpay = new Razorpay({
 });
 
 /* ===================== MIDDLEWARE ===================== */
-app.use(cors({ origin: "*" }));
+app.use(cors({ origin: "empiroxmindcraft.in" }));
 app.use(express.json());
 
 console.log("🔥 SERVER STARTING...");
@@ -977,26 +977,20 @@ app.post("/ai/core", async (req, res) => {
     /* ================= 1. STRICT DYNAMIC FACT DETECTOR ================= */
     const isDynamicFact = (t) => {
       const patterns = [
-        "prime minister",
-        "pm",
-        "president",
-        "chief minister",
-        "cm",
-        "currency",
-        "capital",
-        "current",
-        "latest",
-        "today",
-        "now",
-        "2024",
-        "2025",
-        "2026",
-        "who is pm",
-        "who is president",
-        "breaking",
-        "news"
-      ];
-
+  "prime minister",
+  "who is pm",
+  "who is president",
+  "current president",
+  "current prime minister",
+  "breaking news",
+  "latest news",
+  "today news",
+  "currency rate",
+  "stock market",
+  "live score",
+  "weather today",
+  "election result"
+];
       return patterns.some((p) => t.includes(p));
     };
 
@@ -1129,8 +1123,7 @@ app.post("/ai/core", async (req, res) => {
           input: [
             {
               role: "system",
-              content:
-                "You are a helpful assistant for general knowledge and explanations.",
+            content: companionPrompt,
             },
             ...cleanHistory,
             { role: "user", content: message },
