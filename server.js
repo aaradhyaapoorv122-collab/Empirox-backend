@@ -18,7 +18,15 @@ const razorpay = new Razorpay({
 });
 
 /* ===================== MIDDLEWARE ===================== */
-app.use(cors({ origin: "empiroxmindcraft.in" }));
+app.use(cors({
+  origin: [
+    "https://empiroxmindcraft.in",
+    "https://www.empiroxmindcraft.in"
+  ],
+  methods: ["GET", "POST"],
+  credentials: true
+}));
+
 app.use(express.json());
 
 console.log("🔥 SERVER STARTING...");
