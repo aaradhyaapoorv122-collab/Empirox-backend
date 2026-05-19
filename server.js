@@ -18,14 +18,7 @@ const razorpay = new Razorpay({
 });
 
 /* ===================== MIDDLEWARE ===================== */
-app.use(cors({
-  origin: [
-    "https://empiroxmindcraft.in",
-    "https://www.empiroxmindcraft.in"
-  ],
-  methods: ["GET", "POST"],
-  credentials: true
-}));
+app.use(cors());
 
 app.use(express.json());
 
