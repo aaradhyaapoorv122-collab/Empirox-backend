@@ -5,69 +5,69 @@ const cors = require("cors");
 const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const axios = require("axios");
-const fetch = require("node-fetch");
 
 const supabase = require("./supabaseClient");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+/* ===================== SAFE ENV CHECK ===================== */
+
+if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+  console.error("❌ Razorpay keys missing");
+}
+
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ OpenAI key missing");
+}
+
 /* ===================== RAZORPAY INIT ===================== */
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+
+let razorpay;
+
+try {
+  razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID || "",
+    key_secret: process.env.RAZORPAY_KEY_SECRET || "",
+  });
+} catch (err) {
+  console.error("❌ Razorpay init failed:", err.message);
+}
 
 /* ===================== MIDDLEWARE ===================== */
-app.use(cors({
-origin: [
-  "http://localhost:5173",
-  "https://empiroxmindcraft.in",
-  "https://www.empiroxmindcraft.in",
-  /\.vercel\.app$/
-]
-}))
-app.use(express.json());
+
+app.use(
+  cors({
+    origin: true, // FIX: avoids Railway + Vercel CORS issues
+    credentials: true,
+  })
+);
+
+app.use(express.json({ limit: "10mb" }));
 
 console.log("🔥 SERVER STARTING...");
 console.log("🔑 OPENAI KEY LOADED:", !!process.env.OPENAI_API_KEY);
 
 /* ===================== ROOT ===================== */
+
 app.get("/", (req, res) => {
   res.send("🚀 Empirox Backend is LIVE");
 });
 
-/* ===================== WIKIPEDIA FACT ENGINE ===================== */
+/* ===================== CREATE ORDER ===================== */
 
-const { openAISearch } = require("./services/searchEngine");
-const { getNews } = require("./services/newsEngine");
-
-function isRealTimeQuery(text) {
-  const t = text.toLowerCase();
-
-  return (
-    t.includes("latest") ||
-    t.includes("news") ||
-    t.includes("today") ||
-    t.includes("current") ||
-    t.includes("now") ||
-    t.includes("who is") ||
-    t.includes("prime minister") ||
-    t.includes("president") ||
-    t.includes("update")
-  );
-}
-/* ===================== AI CORE ===================== */
-
-
-   
-
-/* ===================== RAZORPAY ORDER ===================== */
 app.post("/create-order", async (req, res) => {
   try {
     const { plan } = req.body;
 
     const amount = plan === "monthly" ? 14900 : 119900;
+
+    if (!razorpay) {
+      return res.status(500).json({
+        success: false,
+        message: "Razorpay not initialized",
+      });
+    }
 
     const order = await razorpay.orders.create({
       amount,
@@ -75,17 +75,23 @@ app.post("/create-order", async (req, res) => {
       receipt: "emp_" + Date.now(),
     });
 
-    res.json({
+    return res.json({
       success: true,
       order,
     });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("❌ CREATE ORDER ERROR:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Order creation failed",
+    });
   }
 });
 
-/* ===================== PAYMENT VERIFY ===================== */
+/* ===================== VERIFY PAYMENT ===================== */
+
 app.post("/verify-payment", async (req, res) => {
   try {
     const {
@@ -96,8 +102,14 @@ app.post("/verify-payment", async (req, res) => {
       plan,
     } = req.body;
 
-    const body =
-      razorpay_order_id + "|" + razorpay_payment_id;
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing payment data",
+      });
+    }
+
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
 
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
@@ -117,6 +129,8 @@ app.post("/verify-payment", async (req, res) => {
     expiresAt.setMonth(
       expiresAt.getMonth() + (plan === "monthly" ? 1 : 12)
     );
+
+    /* ===================== SUPABASE SAVE ===================== */
 
     await supabase.from("subscriptions").insert([
       {
@@ -152,16 +166,16 @@ app.post("/verify-payment", async (req, res) => {
       success: true,
       message: "Premium unlocked successfully",
     });
+
   } catch (err) {
-    console.error(err);
+    console.error("🔥 VERIFY PAYMENT ERROR:", err);
+
     return res.status(500).json({
       success: false,
       message: "Server error",
     });
   }
 });
-
-/* ===================== START SERVER ===================== */
 
 /* ===================== FEATURE PROMPTS (ADDED) ===================== */
 const systemPrompt = "Empirox AI Core Assistant...";
@@ -966,12 +980,17 @@ Make it engaging and gamified.
 `;
 
 /* ===================== AI CHAT ROUTE ===================== */
+/* ===================== AI CHAT ROUTE ===================== */
+/* ===================== AI CORE ===================== */
 app.post("/ai/core", async (req, res) => {
   try {
     const { message, history = [] } = req.body;
 
     if (!message) {
-      return res.status(400).json({ reply: "Message required" });
+      return res.status(400).json({
+        success: false,
+        reply: "Message required",
+      });
     }
 
     const text = message.toLowerCase();
@@ -982,27 +1001,28 @@ app.post("/ai/core", async (req, res) => {
       content: m.content,
     }));
 
-    /* ================= 1. STRICT DYNAMIC FACT DETECTOR ================= */
+    /* ================= DYNAMIC FACT DETECTOR ================= */
     const isDynamicFact = (t) => {
       const patterns = [
-  "prime minister",
-  "who is pm",
-  "who is president",
-  "current president",
-  "current prime minister",
-  "breaking news",
-  "latest news",
-  "today news",
-  "currency rate",
-  "stock market",
-  "live score",
-  "weather today",
-  "election result"
-];
+        "prime minister",
+        "who is pm",
+        "who is president",
+        "current president",
+        "current prime minister",
+        "breaking news",
+        "latest news",
+        "today news",
+        "currency rate",
+        "stock market",
+        "live score",
+        "weather today",
+        "election result",
+      ];
+
       return patterns.some((p) => t.includes(p));
     };
 
-    /* ================= 2. EDUCATION DETECTOR ================= */
+    /* ================= EDUCATION DETECTOR ================= */
     const isEducation = (t) => {
       const patterns = [
         "explain",
@@ -1019,30 +1039,33 @@ app.post("/ai/core", async (req, res) => {
         "who was",
         "rabindranath",
         "tagore",
-        "before 2023"
+        "before 2023",
       ];
 
       return patterns.some((p) => t.includes(p));
     };
 
-    /* ================= 3. VERIFIED LINKS ================= */
+    /* ================= VERIFIED LINKS ================= */
     const getVerifiedLinks = (q) => {
       const query = q.toLowerCase();
 
-      if (query.includes("pm") || query.includes("prime minister")) {
+      if (
+        query.includes("pm") ||
+        query.includes("prime minister")
+      ) {
         return [
           {
             title: "Wikipedia - Current Leaders",
-            url: "https://en.wikipedia.org/wiki/List_of_current_heads_of_state_and_government"
+            url: "https://en.wikipedia.org/wiki/List_of_current_heads_of_state_and_government",
           },
           {
             title: "Britannica Leaders",
-            url: "https://www.britannica.com/topic/list-of-heads-of-state-and-government-2023-2087707"
+            url: "https://www.britannica.com/topic/list-of-heads-of-state-and-government-2023-2087707",
           },
           {
             title: "BBC World Politics",
-            url: "https://www.bbc.com/news/world"
-          }
+            url: "https://www.bbc.com/news/world",
+          },
         ];
       }
 
@@ -1050,112 +1073,110 @@ app.post("/ai/core", async (req, res) => {
         return [
           {
             title: "White House Official",
-            url: "https://www.whitehouse.gov"
+            url: "https://www.whitehouse.gov",
           },
           {
             title: "Wikipedia Presidents List",
-            url: "https://en.wikipedia.org/wiki/List_of_presidents_of_the_United_States"
-          }
+            url: "https://en.wikipedia.org/wiki/List_of_presidents_of_the_United_States",
+          },
         ];
       }
 
       return [
         {
           title: "Wikipedia",
-          url: "https://www.wikipedia.org"
+          url: "https://www.wikipedia.org",
         },
         {
           title: "Britannica",
-          url: "https://www.britannica.com"
-        }
+          url: "https://www.britannica.com",
+        },
       ];
     };
 
-    /* ================= 🔴 CASE 1: DYNAMIC FACTS → LINKS ONLY (NO AI) ================= */
+    /* ================= CASE 1: REAL-TIME FACTS ================= */
     if (isDynamicFact(text)) {
       return res.json({
+        success: true,
         reply:
           "This is a real-time changing fact. Please refer to trusted sources below.",
         links: getVerifiedLinks(message),
-        mode: "verified_links_only"
+        mode: "verified_links_only",
       });
     }
 
-    /* ================= 🟢 CASE 2: EDUCATION → AI ================= */
-    if (isEducation(text)) {
-      const response = await fetch(
-        "https://api.openai.com/v1/responses",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            input: [
-              {
-                role: "system",
-                content:
-                  "You are a world-class teacher. Explain step-by-step in simple language.",
-              },
-              ...cleanHistory,
-              { role: "user", content: message },
-            ],
-            max_output_tokens: 800,
-          }),
-        }
-      );
+    /* ================= SYSTEM PROMPT ================= */
+    const systemPrompt = isEducation(text)
+      ? "You are a world-class teacher. Explain step-by-step in simple language."
+      : companionPrompt;
 
-      const data = await response.json();
+    console.log("📩 USER MESSAGE:", message);
 
-      return res.json({
-        reply:
-          data?.output?.[0]?.content?.[0]?.text ||
-          "No response generated",
-        mode: "education_ai"
-      });
-    }
-
-    /* ================= 🟡 CASE 3: GENERAL AI ================= */
-    const response = await fetch(
+    /* ================= OPENAI REQUEST ================= */
+    const response = await axios.post(
       "https://api.openai.com/v1/responses",
       {
-        method: "POST",
+        model: "gpt-4o-mini",
+        input: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          ...cleanHistory,
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+        max_output_tokens: 800,
+      },
+      {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          input: [
-            {
-              role: "system",
-            content: companionPrompt,
-            },
-            ...cleanHistory,
-            { role: "user", content: message },
-          ],
-          max_output_tokens: 800,
-        }),
       }
     );
 
-    const data = await response.json();
+    console.log("✅ OPENAI STATUS:", response.status);
 
+    const data = response.data;
+
+    console.log("🧠 OPENAI RESPONSE:", JSON.stringify(data));
+
+    /* ================= EXTRACT RESPONSE ================= */
+    const reply =
+      data.output_text ||
+      data?.output?.[0]?.content?.[0]?.text ||
+      "No response generated";
+
+    /* ================= FINAL RESPONSE ================= */
     return res.json({
-   reply =
-  data.output_text ||
-  data?.output?.[0]?.content?.[0]?.text ||
-  "No response generated",
-      mode: "general_ai"
+      success: true,
+      reply,
+      mode: isEducation(text)
+        ? "education_ai"
+        : "general_ai",
     });
 
   } catch (err) {
-    console.error("AI CORE ERROR:", err);
-    res.status(500).json({ reply: "Server error" });
+    console.error(
+      "🔥 AI CORE ERROR FULL:",
+      err?.response?.data || err.message || err
+    );
+
+    return res.status(500).json({
+      success: false,
+      reply: "AI request failed",
+      error:
+        err?.response?.data ||
+        err.message ||
+        "Unknown server error",
+    });
   }
 });
-app.listen(PORT, () => {
-  console.log("🚀 Empirox AI FINAL v3 running");
-}); 
+
+/* ================= START SERVER ================= */
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
