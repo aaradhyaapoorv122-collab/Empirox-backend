@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const axios = require("axios");
 
-const supabase = require("./supabaseClient");
+let supabase;
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -51,9 +51,12 @@ console.log("🔑 OPENAI KEY LOADED:", !!process.env.OPENAI_API_KEY);
 /* ===================== ROOT ===================== */
 
 app.get("/", (req, res) => {
-  res.send("🚀 Empirox Backend is LIVE");
+  res.status(200).json({
+    status: "OK",
+    message: "Empirox Backend is LIVE 🚀",
+    uptime: process.uptime()
+  });
 });
-
 /* ===================== CREATE ORDER ===================== */
 
 app.post("/create-order", async (req, res) => {
@@ -94,6 +97,10 @@ app.post("/create-order", async (req, res) => {
 
 app.post("/verify-payment", async (req, res) => {
   try {
+
+    if (!supabase) {
+  supabase = require("./supabaseClient");
+}
     const {
       razorpay_order_id,
       razorpay_payment_id,
@@ -1178,5 +1185,6 @@ app.post("/ai/core", async (req, res) => {
 
 /* ================= START SERVER ================= */
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log("🚀 SERVER READY AT PORT:", PORT);
+  console.log("📡 Health check: / is active");
 });
