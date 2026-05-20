@@ -9,7 +9,9 @@ const axios = require("axios");
 const supabase = require("./supabaseClient");
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+app.listen(process.env.PORT, "0.0.0.0", () => {
+  console.log("🚀 Server running on", process.env.PORT);
+});
 
 /* ===================== SAFE ENV CHECK ===================== */
 
