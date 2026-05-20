@@ -5,8 +5,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const axios = require("axios");
-
-let supabase;
+let supabase = require("./supabaseClient");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -1184,7 +1183,7 @@ app.post("/ai/core", async (req, res) => {
 });
 
 /* ================= START SERVER ================= */
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(process.env.PORT || 8080, () =>  {
   console.log("🚀 SERVER READY AT PORT:", PORT);
   console.log("📡 Health check: / is active");
 });
