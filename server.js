@@ -5,7 +5,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const axios = require("axios");
-const fetch = require("node-fetch");
+
 
 const supabase = require("./supabaseClient");
 
@@ -966,12 +966,15 @@ Make it engaging and gamified.
 `;
 
 /* ===================== AI CHAT ROUTE ===================== */
+/* ===================== AI CHAT ROUTE ===================== */
 app.post("/ai/core", async (req, res) => {
   try {
     const { message, history = [] } = req.body;
 
     if (!message) {
-      return res.status(400).json({ reply: "Message required" });
+      return res.status(400).json({
+        reply: "Message required",
+      });
     }
 
     const text = message.toLowerCase();
@@ -982,27 +985,28 @@ app.post("/ai/core", async (req, res) => {
       content: m.content,
     }));
 
-    /* ================= 1. STRICT DYNAMIC FACT DETECTOR ================= */
+    /* ================= DYNAMIC FACT DETECTOR ================= */
     const isDynamicFact = (t) => {
       const patterns = [
-  "prime minister",
-  "who is pm",
-  "who is president",
-  "current president",
-  "current prime minister",
-  "breaking news",
-  "latest news",
-  "today news",
-  "currency rate",
-  "stock market",
-  "live score",
-  "weather today",
-  "election result"
-];
+        "prime minister",
+        "who is pm",
+        "who is president",
+        "current president",
+        "current prime minister",
+        "breaking news",
+        "latest news",
+        "today news",
+        "currency rate",
+        "stock market",
+        "live score",
+        "weather today",
+        "election result",
+      ];
+
       return patterns.some((p) => t.includes(p));
     };
 
-    /* ================= 2. EDUCATION DETECTOR ================= */
+    /* ================= EDUCATION DETECTOR ================= */
     const isEducation = (t) => {
       const patterns = [
         "explain",
@@ -1019,30 +1023,33 @@ app.post("/ai/core", async (req, res) => {
         "who was",
         "rabindranath",
         "tagore",
-        "before 2023"
+        "before 2023",
       ];
 
       return patterns.some((p) => t.includes(p));
     };
 
-    /* ================= 3. VERIFIED LINKS ================= */
+    /* ================= VERIFIED LINKS ================= */
     const getVerifiedLinks = (q) => {
       const query = q.toLowerCase();
 
-      if (query.includes("pm") || query.includes("prime minister")) {
+      if (
+        query.includes("pm") ||
+        query.includes("prime minister")
+      ) {
         return [
           {
             title: "Wikipedia - Current Leaders",
-            url: "https://en.wikipedia.org/wiki/List_of_current_heads_of_state_and_government"
+            url: "https://en.wikipedia.org/wiki/List_of_current_heads_of_state_and_government",
           },
           {
             title: "Britannica Leaders",
-            url: "https://www.britannica.com/topic/list-of-heads-of-state-and-government-2023-2087707"
+            url: "https://www.britannica.com/topic/list-of-heads-of-state-and-government-2023-2087707",
           },
           {
             title: "BBC World Politics",
-            url: "https://www.bbc.com/news/world"
-          }
+            url: "https://www.bbc.com/news/world",
+          },
         ];
       }
 
@@ -1050,74 +1057,43 @@ app.post("/ai/core", async (req, res) => {
         return [
           {
             title: "White House Official",
-            url: "https://www.whitehouse.gov"
+            url: "https://www.whitehouse.gov",
           },
           {
             title: "Wikipedia Presidents List",
-            url: "https://en.wikipedia.org/wiki/List_of_presidents_of_the_United_States"
-          }
+            url: "https://en.wikipedia.org/wiki/List_of_presidents_of_the_United_States",
+          },
         ];
       }
 
       return [
         {
           title: "Wikipedia",
-          url: "https://www.wikipedia.org"
+          url: "https://www.wikipedia.org",
         },
         {
           title: "Britannica",
-          url: "https://www.britannica.com"
-        }
+          url: "https://www.britannica.com",
+        },
       ];
     };
 
-    /* ================= 🔴 CASE 1: DYNAMIC FACTS → LINKS ONLY (NO AI) ================= */
+    /* ================= CASE 1: REAL-TIME FACTS ================= */
     if (isDynamicFact(text)) {
       return res.json({
         reply:
           "This is a real-time changing fact. Please refer to trusted sources below.",
         links: getVerifiedLinks(message),
-        mode: "verified_links_only"
+        mode: "verified_links_only",
       });
     }
 
-    /* ================= 🟢 CASE 2: EDUCATION → AI ================= */
-    if (isEducation(text)) {
-      const response = await fetch(
-        "https://api.openai.com/v1/responses",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            input: [
-              {
-                role: "system",
-                content:
-                  "You are a world-class teacher. Explain step-by-step in simple language.",
-              },
-              ...cleanHistory,
-              { role: "user", content: message },
-            ],
-            max_output_tokens: 800,
-          }),
-        }
-      );
+    /* ================= SYSTEM PROMPT ================= */
+    const systemPrompt = isEducation(text)
+      ? "You are a world-class teacher. Explain step-by-step in simple language."
+      : companionPrompt;
 
-      const data = await response.json();
-
-      return res.json({
-        reply:
-          data?.output?.[0]?.content?.[0]?.text ||
-          "No response generated",
-        mode: "education_ai"
-      });
-    }
-
-    /* ================= 🟡 CASE 3: GENERAL AI ================= */
+    /* ================= OPENAI REQUEST ================= */
     const response = await fetch(
       "https://api.openai.com/v1/responses",
       {
@@ -1131,31 +1107,63 @@ app.post("/ai/core", async (req, res) => {
           input: [
             {
               role: "system",
-            content: companionPrompt,
+              content: systemPrompt,
             },
             ...cleanHistory,
-            { role: "user", content: message },
+            {
+              role: "user",
+              content: message,
+            },
           ],
           max_output_tokens: 800,
         }),
       }
     );
 
-    const data = await response.json();
+    /* ================= DEBUG LOGS ================= */
+    console.log("🔥 OPENAI STATUS:", response.status);
 
-  return res.json({
-  reply:
-    data.output_text ||
-    data?.output?.[0]?.content?.[0]?.text ||
-    "No response generated",
-  mode: "general_ai"
-});
+    const rawText = await response.text();
+
+    console.log("🔥 OPENAI RAW:", rawText);
+
+    /* ================= SAFE JSON PARSE ================= */
+    let data;
+
+    try {
+      data = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error("❌ JSON PARSE ERROR:", parseErr);
+
+      return res.status(500).json({
+        reply: "Invalid JSON received from OpenAI",
+      });
+    }
+
+    /* ================= EXTRACT RESPONSE ================= */
+    const reply =
+      data.output_text ||
+      data?.output?.[0]?.content?.[0]?.text ||
+      "No response generated";
+
+    /* ================= FINAL RESPONSE ================= */
+    return res.json({
+      reply,
+      mode: isEducation(text)
+        ? "education_ai"
+        : "general_ai",
+    });
 
   } catch (err) {
-    console.error("AI CORE ERROR:", err);
-    res.status(500).json({ reply: "Server error" });
+    console.error("🔥 AI CORE ERROR FULL:", err);
+
+    return res.status(500).json({
+      reply: err.message || "Server error",
+    });
   }
 });
+
+/* ================= START SERVER ================= */
 app.listen(PORT, () => {
-  console.log("🚀 Empirox AI FINAL v3 running");
-}); 
+  console.log(`🚀 Server running on port ${PORT}`);
+});
