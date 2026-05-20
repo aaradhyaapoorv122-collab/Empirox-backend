@@ -6,68 +6,68 @@ const crypto = require("crypto");
 const Razorpay = require("razorpay");
 const axios = require("axios");
 
-
 const supabase = require("./supabaseClient");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+/* ===================== SAFE ENV CHECK ===================== */
+
+if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+  console.error("❌ Razorpay keys missing");
+}
+
+if (!process.env.OPENAI_API_KEY) {
+  console.error("❌ OpenAI key missing");
+}
+
 /* ===================== RAZORPAY INIT ===================== */
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+
+let razorpay;
+
+try {
+  razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID || "",
+    key_secret: process.env.RAZORPAY_KEY_SECRET || "",
+  });
+} catch (err) {
+  console.error("❌ Razorpay init failed:", err.message);
+}
 
 /* ===================== MIDDLEWARE ===================== */
-app.use(cors({
-origin: [
-  "http://localhost:5173",
-  "https://empiroxmindcraft.in",
-  "https://www.empiroxmindcraft.in",
-  /\.vercel\.app$/
-]
-}))
-app.use(express.json());
+
+app.use(
+  cors({
+    origin: true, // FIX: avoids Railway + Vercel CORS issues
+    credentials: true,
+  })
+);
+
+app.use(express.json({ limit: "10mb" }));
 
 console.log("🔥 SERVER STARTING...");
 console.log("🔑 OPENAI KEY LOADED:", !!process.env.OPENAI_API_KEY);
 
 /* ===================== ROOT ===================== */
+
 app.get("/", (req, res) => {
   res.send("🚀 Empirox Backend is LIVE");
 });
 
-/* ===================== WIKIPEDIA FACT ENGINE ===================== */
+/* ===================== CREATE ORDER ===================== */
 
-const { openAISearch } = require("./services/searchEngine");
-const { getNews } = require("./services/newsEngine");
-
-function isRealTimeQuery(text) {
-  const t = text.toLowerCase();
-
-  return (
-    t.includes("latest") ||
-    t.includes("news") ||
-    t.includes("today") ||
-    t.includes("current") ||
-    t.includes("now") ||
-    t.includes("who is") ||
-    t.includes("prime minister") ||
-    t.includes("president") ||
-    t.includes("update")
-  );
-}
-/* ===================== AI CORE ===================== */
-
-
-   
-
-/* ===================== RAZORPAY ORDER ===================== */
 app.post("/create-order", async (req, res) => {
   try {
     const { plan } = req.body;
 
     const amount = plan === "monthly" ? 14900 : 119900;
+
+    if (!razorpay) {
+      return res.status(500).json({
+        success: false,
+        message: "Razorpay not initialized",
+      });
+    }
 
     const order = await razorpay.orders.create({
       amount,
@@ -75,17 +75,23 @@ app.post("/create-order", async (req, res) => {
       receipt: "emp_" + Date.now(),
     });
 
-    res.json({
+    return res.json({
       success: true,
       order,
     });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("❌ CREATE ORDER ERROR:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Order creation failed",
+    });
   }
 });
 
-/* ===================== PAYMENT VERIFY ===================== */
+/* ===================== VERIFY PAYMENT ===================== */
+
 app.post("/verify-payment", async (req, res) => {
   try {
     const {
@@ -96,8 +102,14 @@ app.post("/verify-payment", async (req, res) => {
       plan,
     } = req.body;
 
-    const body =
-      razorpay_order_id + "|" + razorpay_payment_id;
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing payment data",
+      });
+    }
+
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
 
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
@@ -117,6 +129,8 @@ app.post("/verify-payment", async (req, res) => {
     expiresAt.setMonth(
       expiresAt.getMonth() + (plan === "monthly" ? 1 : 12)
     );
+
+    /* ===================== SUPABASE SAVE ===================== */
 
     await supabase.from("subscriptions").insert([
       {
@@ -152,16 +166,16 @@ app.post("/verify-payment", async (req, res) => {
       success: true,
       message: "Premium unlocked successfully",
     });
+
   } catch (err) {
-    console.error(err);
+    console.error("🔥 VERIFY PAYMENT ERROR:", err);
+
     return res.status(500).json({
       success: false,
       message: "Server error",
     });
   }
 });
-
-/* ===================== START SERVER ===================== */
 
 /* ===================== FEATURE PROMPTS (ADDED) ===================== */
 const systemPrompt = "Empirox AI Core Assistant...";
@@ -967,12 +981,14 @@ Make it engaging and gamified.
 
 /* ===================== AI CHAT ROUTE ===================== */
 /* ===================== AI CHAT ROUTE ===================== */
+/* ===================== AI CORE ===================== */
 app.post("/ai/core", async (req, res) => {
   try {
     const { message, history = [] } = req.body;
 
     if (!message) {
       return res.status(400).json({
+        success: false,
         reply: "Message required",
       });
     }
@@ -1081,6 +1097,7 @@ app.post("/ai/core", async (req, res) => {
     /* ================= CASE 1: REAL-TIME FACTS ================= */
     if (isDynamicFact(text)) {
       return res.json({
+        success: true,
         reply:
           "This is a real-time changing fact. Please refer to trusted sources below.",
         links: getVerifiedLinks(message),
@@ -1093,52 +1110,39 @@ app.post("/ai/core", async (req, res) => {
       ? "You are a world-class teacher. Explain step-by-step in simple language."
       : companionPrompt;
 
+    console.log("📩 USER MESSAGE:", message);
+
     /* ================= OPENAI REQUEST ================= */
-    const response = await fetch(
+    const response = await axios.post(
       "https://api.openai.com/v1/responses",
       {
-        method: "POST",
+        model: "gpt-4o-mini",
+        input: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          ...cleanHistory,
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+        max_output_tokens: 800,
+      },
+      {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          input: [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-            ...cleanHistory,
-            {
-              role: "user",
-              content: message,
-            },
-          ],
-          max_output_tokens: 800,
-        }),
       }
     );
 
-    /* ================= DEBUG LOGS ================= */
-    console.log("🔥 OPENAI STATUS:", response.status);
+    console.log("✅ OPENAI STATUS:", response.status);
 
-    const rawText = await response.text();
+    const data = response.data;
 
-    console.log("🔥 OPENAI RAW:", rawText);
-
-    /* ================= SAFE JSON PARSE ================= */
-    let data;
-
-    try {
-      data = JSON.parse(rawText);
-    } catch (parseErr) {
-      console.error("❌ JSON PARSE ERROR:", parseErr);
-
-      return res.status(500).json({
-        reply: "Invalid JSON received from OpenAI",
-      });
-    }
+    console.log("🧠 OPENAI RESPONSE:", JSON.stringify(data));
 
     /* ================= EXTRACT RESPONSE ================= */
     const reply =
@@ -1148,6 +1152,7 @@ app.post("/ai/core", async (req, res) => {
 
     /* ================= FINAL RESPONSE ================= */
     return res.json({
+      success: true,
       reply,
       mode: isEducation(text)
         ? "education_ai"
@@ -1155,15 +1160,23 @@ app.post("/ai/core", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("🔥 AI CORE ERROR FULL:", err);
+    console.error(
+      "🔥 AI CORE ERROR FULL:",
+      err?.response?.data || err.message || err
+    );
 
     return res.status(500).json({
-      reply: err.message || "Server error",
+      success: false,
+      reply: "AI request failed",
+      error:
+        err?.response?.data ||
+        err.message ||
+        "Unknown server error",
     });
   }
 });
 
 /* ================= START SERVER ================= */
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
