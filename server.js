@@ -65,19 +65,16 @@ app.get("/test", (req, res) => {
 });
 /* ===================== CREATE ORDER ===================== */
 
-
 app.post("/create-order", async (req, res) => {
   try {
     const { plan } = req.body;
 
     const amount = plan === "monthly" ? 14900 : 119900;
 
-    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-      return res.status(500).json({
-        success: false,
-        message: "Missing Razorpay env variables",
-      });
-    }
+    console.log("🔑 KEY CHECK:", {
+      key: !!process.env.RAZORPAY_KEY_ID,
+      secret: !!process.env.RAZORPAY_KEY_SECRET,
+    });
 
     const order = await razorpay.orders.create({
       amount,
@@ -91,15 +88,16 @@ app.post("/create-order", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("🔥 FULL RAZORPAY ERROR:", err); // IMPORTANT
+    console.error("🔥 REAL RAZORPAY ERROR:");
+    console.error(err?.error || err);
+    console.error(err?.message);
 
     return res.status(500).json({
       success: false,
-      message: err.message || "Order creation failed",
+      message: err?.message || "Order creation failed",
     });
   }
 });
-
 /* ===================== VERIFY PAYMENT ===================== */
 
 app.post("/verify-payment", async (req, res) => {
