@@ -37,10 +37,18 @@ try {
 
 app.use(
   cors({
-    origin: true, // FIX: avoids Railway + Vercel CORS issues
+    origin: [
+      "http://localhost:5173",
+      "https://empiroxmindcraft.in",
+      "https://www.empiroxmindcraft.in"
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
+
+app.options("*", cors());
 
 app.use(express.json({ limit: "10mb" }));
 
@@ -49,14 +57,14 @@ console.log("🔑 OPENAI KEY LOADED:", !!process.env.OPENAI_API_KEY);
 
 /* ===================== ROOT ===================== */
 
-app.get("/", (req, res) => {
-  res.status(200).json({
-    status: "OK",
-    message: "Empirox Backend is LIVE 🚀",
-    uptime: process.uptime()
+app.get("/test", (req, res) => {
+  res.json({
+    success: true,
+    message: "Backend works"
   });
 });
 /* ===================== CREATE ORDER ===================== */
+
 
 app.post("/create-order", async (req, res) => {
   try {
