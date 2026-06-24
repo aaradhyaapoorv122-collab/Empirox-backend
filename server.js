@@ -72,10 +72,10 @@ app.post("/create-order", async (req, res) => {
 
     const amount = plan === "monthly" ? 14900 : 119900;
 
-    if (!razorpay) {
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
       return res.status(500).json({
         success: false,
-        message: "Razorpay not initialized",
+        message: "Missing Razorpay env variables",
       });
     }
 
@@ -91,11 +91,11 @@ app.post("/create-order", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ CREATE ORDER ERROR:", err);
+    console.error("🔥 FULL RAZORPAY ERROR:", err); // IMPORTANT
 
     return res.status(500).json({
       success: false,
-      message: "Order creation failed",
+      message: err.message || "Order creation failed",
     });
   }
 });
